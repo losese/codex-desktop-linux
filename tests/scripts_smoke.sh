@@ -225,6 +225,69 @@ SCRIPT
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
 }
 
+test_deb_builder_without_updater() {
+    info "Running no-updater Debian packaging smoke test"
+    local workspace="$TMP_DIR/deb-no-updater"
+    local bin_dir="$workspace/bin"
+    local app_dir="$workspace/app"
+    local dist_dir="$workspace/dist"
+    local pkg_root="$workspace/deb-root"
+
+    mkdir -p "$workspace" "$dist_dir"
+    make_stub_bin_dir "$bin_dir"
+    make_fake_app "$app_dir"
+
+    cat > "$bin_dir/dpkg" <<'SCRIPT'
+#!/usr/bin/env bash
+if [ "$1" = "--print-architecture" ]; then
+    echo amd64
+    exit 0
+fi
+exit 0
+SCRIPT
+    cat > "$bin_dir/dpkg-deb" <<'SCRIPT'
+#!/usr/bin/env bash
+output="${@: -1}"
+mkdir -p "$(dirname "$output")"
+touch "$output"
+SCRIPT
+    cat > "$bin_dir/cargo" <<'SCRIPT'
+#!/usr/bin/env bash
+echo "cargo should not be called when PACKAGE_WITH_UPDATER=0" >&2
+exit 99
+SCRIPT
+    chmod +x "$bin_dir/dpkg" "$bin_dir/dpkg-deb" "$bin_dir/cargo"
+
+    PATH="$bin_dir:$PATH" \
+    APP_DIR_OVERRIDE="$app_dir" \
+    PKG_ROOT_OVERRIDE="$pkg_root" \
+    DIST_DIR_OVERRIDE="$dist_dir" \
+    PACKAGE_WITH_UPDATER=0 \
+    PACKAGE_VERSION="2026.03.24.120000+manual" \
+    bash "$REPO_DIR/scripts/build-deb.sh"
+
+    assert_file_exists "$dist_dir/codex-desktop_2026.03.24.120000+manual_amd64.deb"
+    assert_file_exists "$pkg_root/usr/bin/codex-desktop"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
+    assert_file_not_exists "$pkg_root/usr/bin/codex-update-manager"
+    assert_file_not_exists "$pkg_root/usr/lib/systemd/user/codex-update-manager.service"
+    assert_file_not_exists "$pkg_root/usr/share/polkit-1/actions/com.github.ilysenko.codex-desktop-linux.update.policy"
+    assert_file_not_exists "$pkg_root/opt/codex-desktop/update-builder"
+    assert_file_not_exists "$pkg_root/DEBIAN/postinst"
+    assert_file_not_exists "$pkg_root/DEBIAN/prerm"
+    assert_file_not_exists "$pkg_root/DEBIAN/postrm"
+    assert_not_contains "$pkg_root/DEBIAN/control" "pkexec"
+    assert_not_contains "$pkg_root/DEBIAN/control" "polkit"
+    assert_not_contains "$pkg_root/DEBIAN/control" "Local auto-updates"
+    assert_contains "$pkg_root/DEBIAN/control" "without codex-update-manager"
+    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Actions=CheckForUpdates"
+    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "Desktop Action CheckForUpdates"
+    assert_not_contains "$pkg_root/usr/share/applications/codex-desktop.desktop" "codex-update-manager"
+    assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "systemctl"
+    assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "codex-update-manager"
+    assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-desktop.desktop"'
+}
+
 test_rpm_builder_smoke() {
     info "Running RPM packaging smoke test"
     local workspace="$TMP_DIR/rpm"
@@ -2251,6 +2314,7 @@ main() {
     test_common_helper_sourcing
     test_deb_builder_smoke
     test_deb_builder_respects_package_identity
+    test_deb_builder_without_updater
     test_rpm_builder_smoke
     test_missing_input_failure
     test_make_build_app_uses_installer_download_flow_by_default
