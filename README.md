@@ -95,7 +95,19 @@ make appimage
 nix run github:ilysenko/codex-desktop-linux
 ```
 
-The flake handles dependencies and patches Electron for NixOS. A GitHub Actions bot refreshes the upstream `Codex.dmg` and recursive Nix payload hashes in `main`; if you hit a hash mismatch right after an upstream release, wait for the next bot run and retry.
+The flake handles dependencies and patches Electron for NixOS. A GitHub Actions bot refreshes the upstream `Codex.dmg` hash and verifies the Nix package outputs in `main`; if you hit a hash mismatch right after an upstream release, wait for the next bot run and retry.
+
+Because flakes do not include the git-ignored `linux-features/features.json` opt-in file, Nix exposes feature-specific app variants for optional integrations. To build and run Codex Desktop with the experimental mobile remote-control feature enabled:
+
+```bash
+nix run github:ilysenko/codex-desktop-linux#remote-mobile-control
+```
+
+Feature-specific Nix outputs are additive. To enable both the Computer Use UI and experimental mobile remote control:
+
+```bash
+nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+```
 
 `nix develop github:ilysenko/codex-desktop-linux` enters a dev shell with the required tooling.
 
@@ -181,6 +193,12 @@ Nix users can also run the opt-in flake output directly:
 nix run github:ilysenko/codex-desktop-linux#codex-desktop-computer-use-ui
 ```
 
+The Computer Use UI output can also be combined with Linux feature outputs, for example:
+
+```bash
+nix run github:ilysenko/codex-desktop-linux#computer-use-ui-remote-mobile-control
+```
+
 ### Side-by-side dev variant
 
 If you'd like to test the backend without affecting your default install, the side-by-side dev variant builds a separate app under a different ID and webview port:
@@ -198,7 +216,6 @@ By default, the native package installs a companion `systemd --user` service nam
 
 - It checks upstream `Codex.dmg` on daemon startup, every 6 hours, and in the background on app launch when stale.
 - When a new DMG is available, it rebuilds a local native package with `/opt/codex-desktop/update-builder`.
-- Rebuilds reuse the package's staged optional Linux feature config, so enabled `linux-features/` choices survive auto-updates.
 - If Codex Desktop is open, the final install waits until Electron exits.
 - The updater runs unprivileged and uses `pkexec` only for the final package install.
 - Codex CLI checks are best-effort and launcher-scoped. Set `CODEX_SYNC_CLI_PREFLIGHT=1` when debugging launch-time CLI preflight.
@@ -340,7 +357,7 @@ After `make build-app` or `make build-app-fresh`, build a native package from `c
 |---|---|---|---|
 | Debian | `make deb` or `./scripts/build-deb.sh` | `dist/codex-desktop_*.deb` | `sudo dpkg -i dist/codex-desktop_*.deb` |
 | RPM (Fedora / openSUSE) | `make rpm` or `./scripts/build-rpm.sh` | `dist/codex-desktop-*.x86_64.rpm` | `sudo dnf install dist/codex-desktop-*.rpm` (Fedora) or `sudo zypper install dist/codex-desktop-*.rpm` (openSUSE) |
-| Arch (pacman) | `make pacman` or `./scripts/build-pacman.sh` | `dist/codex-desktop-*.pkg.tar.zst` plus `dist/codex-desktop-latest.pkg.tar.zst` | `sudo pacman -U dist/codex-desktop-latest.pkg.tar.zst` |
+| Arch (pacman) | `make pacman` or `./scripts/build-pacman.sh` | `dist/codex-desktop-*.pkg.tar.zst` | `sudo pacman -U dist/codex-desktop-*.pkg.tar.zst` |
 | AppImage | `make appimage` or `./scripts/build-appimage.sh` | `dist/codex-desktop-*.AppImage` | Run directly; no system install |
 | Auto-detect | `make package && make install` | matches your distro | handled by `make install` |
 

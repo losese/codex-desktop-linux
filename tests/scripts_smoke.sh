@@ -1085,6 +1085,85 @@ SCRIPT
     assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
 }
 
+test_native_module_rebuild_accepts_prebuilt_source() {
+    info "Checking native module rebuild accepts prebuilt source"
+    local workspace="$TMP_DIR/native-module-prebuilt-source"
+    local app_dir="$workspace/app-extracted"
+    local source_dir="$workspace/prebuilt"
+    local output_log="$workspace/output.log"
+
+    mkdir -p \
+        "$app_dir/node_modules/better-sqlite3" \
+        "$app_dir/node_modules/node-pty" \
+        "$source_dir/better-sqlite3/build/Release" \
+        "$source_dir/node-pty/build/Release"
+    printf '%s\n' '{"version":"12.9.0"}' > "$app_dir/node_modules/better-sqlite3/package.json"
+    printf '%s\n' '{"version":"1.1.0"}' > "$app_dir/node_modules/node-pty/package.json"
+    printf '%s\n' stale > "$app_dir/node_modules/better-sqlite3/old.txt"
+
+    printf '%s\n' '{"version":"12.9.0"}' > "$source_dir/better-sqlite3/package.json"
+    printf '%s\n' '{"version":"1.1.0"}' > "$source_dir/node-pty/package.json"
+    : > "$source_dir/better-sqlite3/build/Release/better_sqlite3.node"
+    : > "$source_dir/better-sqlite3/build/Release/junk.o"
+    : > "$source_dir/node-pty/build/Release/pty.node"
+    : > "$source_dir/node-pty/build/Release/junk.o"
+
+    (
+        WORK_DIR="$workspace/work"
+        ELECTRON_VERSION="42.0.1"
+        CODEX_NATIVE_MODULES_SOURCE="$source_dir"
+        mkdir -p "$WORK_DIR"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/native-modules.sh"
+        build_native_modules "$app_dir"
+    ) > "$output_log" 2>&1
+
+    assert_contains "$output_log" "Using prebuilt native modules from $source_dir"
+    assert_file_exists "$app_dir/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+    assert_file_exists "$app_dir/node_modules/node-pty/build/Release/pty.node"
+    [ ! -f "$app_dir/node_modules/better-sqlite3/old.txt" ] || fail "Expected stale better-sqlite3 module to be replaced"
+    [ ! -f "$app_dir/node_modules/better-sqlite3/build/Release/junk.o" ] || fail "Expected better-sqlite3 build junk to be pruned"
+    [ ! -f "$app_dir/node_modules/node-pty/build/Release/junk.o" ] || fail "Expected node-pty build junk to be pruned"
+}
+
+test_bundled_plugin_builders_accept_prebuilt_binaries() {
+    info "Checking bundled plugin builders accept prebuilt binaries"
+    local workspace="$TMP_DIR/bundled-plugin-prebuilt-binaries"
+    local backend="$workspace/codex-computer-use-linux"
+    local cosmic="$workspace/codex-computer-use-cosmic"
+    local host="$workspace/codex-chrome-extension-host"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$workspace"
+    printf '#!/usr/bin/env bash\n' > "$backend"
+    printf '#!/usr/bin/env bash\n' > "$cosmic"
+    printf '#!/usr/bin/env bash\n' > "$host"
+    chmod +x "$backend" "$cosmic" "$host"
+
+    (
+        SCRIPT_DIR="$REPO_DIR"
+        CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE="$backend"
+        CODEX_LINUX_COMPUTER_USE_COSMIC_SOURCE="$cosmic"
+        CODEX_CHROME_EXTENSION_HOST_SOURCE="$host"
+        info() { echo "[INFO] $*" >&2; }
+        warn() { echo "[WARN] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        build_linux_computer_use_backend
+        build_chrome_extension_host
+    ) > "$output_log" 2>&1
+
+    assert_contains "$output_log" "Using prebuilt Linux Computer Use backend"
+    assert_contains "$output_log" "Using prebuilt Chrome extension host"
+    assert_contains "$output_log" "$backend"
+    assert_contains "$output_log" "$cosmic"
+    assert_contains "$output_log" "$host"
+}
+
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
@@ -3457,6 +3536,8 @@ main() {
     test_managed_node_runtime_source_install
     test_better_sqlite3_electron_42_source_patch
     test_native_module_rebuild_uses_local_electron_rebuild_toolchain
+    test_native_module_rebuild_accepts_prebuilt_source
+    test_bundled_plugin_builders_accept_prebuilt_binaries
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_node_repl_glibc_pidfd_patch_static
     test_browser_use_node_repl_ldd_output_compatibility
