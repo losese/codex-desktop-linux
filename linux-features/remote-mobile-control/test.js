@@ -204,9 +204,16 @@ test("Linux remote-control client revocation triggers local cleanup and re-enrol
   const patched = applyLinuxRemoteControlClientRevocationRecoveryPatch(source);
 
   assert.notEqual(patched, source);
+  assert.match(patched, /Remote-control client key material missing`\|\|e\.message===`Remote-control client has been revoked/);
   assert.match(patched, /Remote-control client has been revoked/);
-  assert.match(patched, /Remote-control client key material missing`\|\|e\.message===`Remote-control client has been revoked`:!1/);
   assert.equal(applyLinuxRemoteControlClientRevocationRecoveryPatch(patched), patched);
+});
+
+test("Linux remote-control client recovery handles bare missing key material errors", () => {
+  const source = syntheticRecoverableErrorPredicateBundle();
+  const patched = applyLinuxRemoteControlClientRevocationRecoveryPatch(source);
+
+  assert.match(patched, /e\.message===`Remote-control client key material missing`/);
 });
 
 test("Linux remote-control load gate enables remote-control environment loading", () => {

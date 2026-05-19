@@ -339,13 +339,16 @@ function applyLinuxRemoteControlClientAccountCompatibilityPatch(source) {
 }
 
 function applyLinuxRemoteControlClientRevocationRecoveryPatch(source) {
-  if (source.includes("Remote-control client has been revoked")) {
+  if (
+    source.includes("e.message===`Remote-control client key material missing`") &&
+    source.includes("e.message===`Remote-control client has been revoked`")
+  ) {
     return source;
   }
 
   const recoverableErrorNeedle =
-    "e.message===`Remote control request failed (403): Remote-control client key material missing`:!1";
-  if (!source.includes(recoverableErrorNeedle)) {
+    /e\.message===`Remote control request failed \(403\): Remote-control client key material missing`(?:\|\|e\.message===`Remote-control client key material missing`)?(?:\|\|e\.message===`Remote-control client has been revoked`)?:!1/u;
+  if (!recoverableErrorNeedle.test(source)) {
     if (!source.includes("Remote-control client key material missing")) {
       return source;
     }
@@ -355,7 +358,7 @@ function applyLinuxRemoteControlClientRevocationRecoveryPatch(source) {
 
   return source.replace(
     recoverableErrorNeedle,
-    "e.message===`Remote control request failed (403): Remote-control client key material missing`||e.message===`Remote-control client has been revoked`:!1",
+    "e.message===`Remote control request failed (403): Remote-control client key material missing`||e.message===`Remote-control client key material missing`||e.message===`Remote-control client has been revoked`:!1",
   );
 }
 
