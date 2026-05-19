@@ -1053,7 +1053,7 @@ test_setup_native_wizard_dry_runs_deps_and_install_native() {
         bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
 
     assert_contains "$output_log" "Would run: bash scripts/install-deps.sh"
-    assert_contains "$output_log" "Would run: PACKAGE_WITH_UPDATER=0 make install-native"
+    assert_contains "$output_log" 'Would run: PATH="$HOME/.cargo/bin:$PATH" PACKAGE_WITH_UPDATER=0 make install-native'
     assert_contains "$output_log" "Dry-run mode: no dependency install or native package install command was executed."
 }
 

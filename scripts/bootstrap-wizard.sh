@@ -930,13 +930,18 @@ run_install_deps_step() {
 
 run_install_native_step() {
     if package_with_updater_enabled; then
-        run_repo_command "make install-native" make install-native
+        if dry_run_enabled; then
+            info 'Would run: PATH="$HOME/.cargo/bin:$PATH" make install-native'
+        else
+            info 'Running: PATH="$HOME/.cargo/bin:$PATH" make install-native'
+            (cd "$REPO_DIR" && PATH="$HOME/.cargo/bin:$PATH" make install-native)
+        fi
     else
         if dry_run_enabled; then
-            info "Would run: PACKAGE_WITH_UPDATER=0 make install-native"
+            info 'Would run: PATH="$HOME/.cargo/bin:$PATH" PACKAGE_WITH_UPDATER=0 make install-native'
         else
-            info "Running: PACKAGE_WITH_UPDATER=0 make install-native"
-            (cd "$REPO_DIR" && PACKAGE_WITH_UPDATER=0 make install-native)
+            info 'Running: PATH="$HOME/.cargo/bin:$PATH" PACKAGE_WITH_UPDATER=0 make install-native'
+            (cd "$REPO_DIR" && PATH="$HOME/.cargo/bin:$PATH" PACKAGE_WITH_UPDATER=0 make install-native)
         fi
     fi
 }
@@ -1037,7 +1042,7 @@ main() {
     if dry_run_enabled; then
         info "Dry-run completed."
     else
-        info "No system services, groups, key files, model files, or plugin caches were changed unless explicitly confirmed above."
+        info "Feature cleanup did not change services, groups, key files, model files, or plugin caches unless explicitly confirmed above."
     fi
     info "If Computer Use needs ydotoold, input group membership, a portal backend, or logout/login, run those steps explicitly after reviewing the commands."
 }
