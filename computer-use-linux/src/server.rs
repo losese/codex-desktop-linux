@@ -21,8 +21,9 @@ use crate::windows::{
 use anyhow::Result;
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
+    model::{CallToolResult, Content},
     schemars::JsonSchema,
-    tool, tool_handler, tool_router, ServerHandler, ServiceExt,
+    tool, tool_handler, tool_router, ErrorData, ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -259,6 +260,64 @@ impl ComputerUseLinux {
             diagnostics,
             message,
         })
+    }
+
+    #[tool(
+        name = "screenshot",
+        description = "Capture the screen and return it as a viewable image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped to just that window, so you see the app on its own rather than the whole desktop. Returns the PNG image plus a short caption (dimensions, source, and crop bounds)."
+    )]
+    async fn screenshot(
+        &self,
+        Parameters(params): Parameters<ScreenshotParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let target = params.window_target();
+
+        // When targeting a window, raise it first (so it isn't occluded) and
+        // resolve its bounds so we can crop to just that window.
+        let mut crop: Option<crate::windowing::WindowBounds> = None;
+        let mut window_label: Option<String> = None;
+        if let Some(target) = &target {
+            if params.raise_window.unwrap_or(true) {
+                let _ = focus_window_target(target).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            if !params.full_screen.unwrap_or(false) {
+                if let Ok(windows) = list_windows().await {
+                    if let Ok(window) = resolve_window_target(&windows, target) {
+                        crop = window.bounds.clone();
+                        window_label = window.title.clone();
+                    }
+                }
+            }
+        }
+
+        let capture = capture_screenshot()
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("screenshot failed: {e}"), None))?;
+        let raw =
+            decode_data_url(&capture.data_url).map_err(|e| ErrorData::internal_error(e, None))?;
+
+        let (png, width, height, cropped) = match crop.as_ref().and_then(window_crop_rect) {
+            Some((x, y, w, h)) => match crop_png(&raw, x, y, w, h) {
+                Ok((bytes, cw, ch)) => (bytes, cw, ch, true),
+                // If cropping fails, fall back to the full frame rather than erroring.
+                Err(_) => (raw, capture.width, capture.height, false),
+            },
+            None => (raw, capture.width, capture.height, false),
+        };
+
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let caption = serde_json::json!({
+            "width": width,
+            "height": height,
+            "source": capture.source,
+            "cropped_to_window": cropped,
+            "window_title": window_label,
+        });
+        Ok(CallToolResult::success(vec![
+            Content::image(b64, "image/png".to_string()),
+            Content::text(caption.to_string()),
+        ]))
     }
 
     /// Lazily create the uinput absolute pointer, sizing its ABS range to the
@@ -1967,6 +2026,98 @@ fn env_contains(key: &str, needle: &str) -> bool {
     env::var(key)
         .ok()
         .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+struct ScreenshotParams {
+    #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    /// Raise the targeted window before capture (default true). Ignored without
+    /// a window target.
+    #[serde(default)]
+    raise_window: Option<bool>,
+    /// Capture the whole desktop even when a window is targeted (default false).
+    #[serde(default)]
+    full_screen: Option<bool>,
+}
+
+impl ScreenshotParams {
+    fn window_target(&self) -> Option<WindowTarget> {
+        if self.window_id.is_none()
+            && self.pid.is_none()
+            && self.app_id.is_none()
+            && self.wm_class.is_none()
+            && self.title.is_none()
+        {
+            return None;
+        }
+        Some(WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: None,
+            terminal_pid: None,
+            terminal_command: None,
+            terminal_cwd: None,
+            app_id: self.app_id.clone(),
+            wm_class: self.wm_class.clone(),
+            title: self.title.clone(),
+        })
+    }
+}
+
+/// Decode the base64 payload of a `data:` URL (or a bare base64 string) to bytes.
+fn decode_data_url(data_url: &str) -> std::result::Result<Vec<u8>, String> {
+    use base64::Engine;
+    let b64 = data_url.split_once(',').map(|(_, b)| b).unwrap_or(data_url);
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("invalid screenshot base64: {e}"))
+}
+
+/// Convert a window's bounds into a crop rectangle, if it has a usable origin
+/// and non-zero size.
+fn window_crop_rect(bounds: &crate::windowing::WindowBounds) -> Option<(i32, i32, u32, u32)> {
+    let x = bounds.x?;
+    let y = bounds.y?;
+    if bounds.width == 0 || bounds.height == 0 {
+        return None;
+    }
+    Some((x, y, bounds.width, bounds.height))
+}
+
+/// Crop a PNG image to `(x, y, w, h)` (clamped to the image), returning the
+/// re-encoded PNG and the actual cropped dimensions.
+fn crop_png(
+    raw: &[u8],
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+) -> std::result::Result<(Vec<u8>, u32, u32), String> {
+    use std::io::Cursor;
+    let img = image::load_from_memory_with_format(raw, image::ImageFormat::Png)
+        .map_err(|e| format!("decode png: {e}"))?;
+    let (iw, ih) = (img.width(), img.height());
+    let x = x.max(0) as u32;
+    let y = y.max(0) as u32;
+    if x >= iw || y >= ih {
+        return Err("crop origin outside image".into());
+    }
+    let w = w.min(iw - x);
+    let h = h.min(ih - y);
+    let sub = img.crop_imm(x, y, w, h);
+    let mut out = Vec::new();
+    sub.write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| format!("encode png: {e}"))?;
+    Ok((out, w, h))
 }
 
 fn action_result(
